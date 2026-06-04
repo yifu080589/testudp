@@ -12,6 +12,9 @@
 #define CMD_GETCFG      'G'
 #define CMD_CFGDATA     'K'
 #define CMD_ERROR       'E'
+#define CMD_GETSTREAM1  'S'
+
+static int stream1_done = 0;
 
 int main(void)
 {
@@ -35,22 +38,13 @@ int main(void)
 
     int opt = 1;
 
-    setsockopt(sock,
-               SOL_SOCKET,
-               SO_REUSEADDR,
-               &opt,
-               sizeof(opt));
-
-    setsockopt(sock,
-               SOL_SOCKET,
-               SO_BROADCAST,
-               &opt,
-               sizeof(opt));
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt));
 
     memset(&local_addr, 0, sizeof(local_addr));
 
-    local_addr.sin_family      = AF_INET;
-    local_addr.sin_port        = htons(PORT);
+    local_addr.sin_family = AF_INET;
+    local_addr.sin_port   = htons(PORT);
     local_addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(sock,
@@ -73,8 +67,9 @@ int main(void)
     printf("PORT = %d\n", PORT);
     printf("=================================\n");
 
-    /* 發送 Discover */
-
+    /* =========================
+     * DISCOVER IPC
+     * ========================= */
     char discover = CMD_DISCOVER;
 
     sendto(sock,
@@ -100,64 +95,91 @@ int main(void)
 
         buf[n] = 0;
 
-        /* IPC INFO */
-
+        /* =========================
+         * IPC FOUND
+         * ========================= */
         if (buf[0] == CMD_INFO)
         {
             char ipc_ip[32];
 
-            strcpy(ipc_ip,
-                   inet_ntoa(recv_addr.sin_addr));
+            strcpy(ipc_ip, inet_ntoa(recv_addr.sin_addr));
 
-            printf("\n");
-            printf("=================================\n");
+            printf("\n=================================\n");
             printf("IPC FOUND\n");
-            printf("IP : %s\n", ipc_ip);
+            printf("IP   : %s\n", ipc_ip);
             printf("INFO : %s\n", buf + 1);
             printf("=================================\n");
 
-            char msg[256];
+            /* =========================
+             * 單參數查詢（保留）
+             * ========================= */
+            char single_cfg[256];
 
-            memset(msg, 0, sizeof(msg));
-
-            snprintf(msg,
-                     sizeof(msg),
+            snprintf(single_cfg,
+                     sizeof(single_cfg),
                      "Gencode.stream1.codec");
 
             sendto(sock,
-                   msg,
-                   strlen(msg),
+                   single_cfg,
+                   strlen(single_cfg),
                    0,
                    (struct sockaddr *)&recv_addr,
                    recv_len);
 
             printf("[XVR] GETCFG encode.stream1.codec\n");
+
+            /* =========================
+             * STREAM1 BUNDLE（工業級）
+             * ========================= */
+            char stream_cmd = CMD_GETSTREAM1;
+
+            sendto(sock,
+                   &stream_cmd,
+                   1,
+                   0,
+                   (struct sockaddr *)&recv_addr,
+                   recv_len);
+
+            printf("[XVR] GET STREAM1 BUNDLE\n");
+
+            stream1_done = 0;
         }
 
-        /* CONFIG DATA */
-
+        /* =========================
+         * CONFIG RESPONSE
+         * ========================= */
         else if (buf[0] == CMD_CFGDATA)
         {
-            printf("\n");
-            printf("=================================\n");
+            printf("\n=================================\n");
             printf("CONFIG RESPONSE\n");
             printf("%s\n", buf + 1);
             printf("=================================\n");
         }
 
-        /* ERROR */
-
+        /* =========================
+         * ERROR
+         * ========================= */
         else if (buf[0] == CMD_ERROR)
         {
-            printf("\n");
-            printf("=================================\n");
+            printf("\n=================================\n");
             printf("IPC ERROR\n");
             printf("%s\n", buf + 1);
             printf("=================================\n");
         }
+
+        /* =========================
+         * UNKNOWN（過濾掉 S 重複問題）
+         * ========================= */
+        else
+        {
+            /* 避免 S 尚未支援時一直噴 */
+            if (buf[0] != CMD_GETSTREAM1)
+            {
+                printf("[XVR] UNKNOWN RESPONSE: %c\n", buf[0]);
+            }
+        }
     }
 
     close(sock);
-
     return 0;
 }

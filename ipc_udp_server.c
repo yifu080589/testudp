@@ -11,13 +11,32 @@
 #define PORT 37000
 #define BUF_SIZE 2048
 
-#define CMD_DISCOVER 'C'
-#define CMD_INFO     'I'
-#define CMD_GETCFG   'G'
-#define CMD_CFGDATA  'K'
-#define CMD_ERROR    'E'
+#define CMD_DISCOVER    'C'
+#define CMD_INFO        'I'
+#define CMD_GETCFG      'G'
+#define CMD_CFGDATA     'K'
+#define CMD_ERROR       'E'
+#define CMD_GETSTREAM1  'S'
+#define CMD_BUNDLE      'B'
 
-/* 取得第一個 IPv4（避免寫死 eth0 / enp0s8） */
+/* -------------------------
+ * safe get (industrial)
+ * ------------------------- */
+static void get_cfg(const char *key, const char *def, char *out, int size)
+{
+    char tmp[128] = {0};
+
+    if (nbus_get(key, tmp, sizeof(tmp)) == NBUS_RESULT_OK && tmp[0] != '\0')
+        strncpy(out, tmp, size - 1);
+    else
+        strncpy(out, def, size - 1);
+
+    out[size - 1] = 0;
+}
+
+/* -------------------------
+ * get ip
+ * ------------------------- */
 int get_first_ipv4(char *ifname, char *ip, char *mask)
 {
     struct ifaddrs *ifaddr, *ifa;
@@ -31,8 +50,8 @@ int get_first_ipv4(char *ifname, char *ip, char *mask)
         if (ifa->ifa_addr->sa_family != AF_INET) continue;
         if (strcmp(ifa->ifa_name, "lo") == 0) continue;
 
-        struct sockaddr_in *a = (struct sockaddr_in*)ifa->ifa_addr;
-        struct sockaddr_in *m = (struct sockaddr_in*)ifa->ifa_netmask;
+        struct sockaddr_in *a = (struct sockaddr_in *)ifa->ifa_addr;
+        struct sockaddr_in *m = (struct sockaddr_in *)ifa->ifa_netmask;
 
         inet_ntop(AF_INET, &a->sin_addr, ip, 32);
         inet_ntop(AF_INET, &m->sin_addr, mask, 32);
@@ -47,7 +66,10 @@ int get_first_ipv4(char *ifname, char *ip, char *mask)
     return -1;
 }
 
-int main()
+/* =========================
+ * MAIN
+ * ========================= */
+int main(void)
 {
     int sock;
     struct sockaddr_in local, client;
@@ -60,7 +82,6 @@ int main()
     char mask[32];
 
     sock = socket(AF_INET, SOCK_DGRAM, 0);
-
     if (sock < 0)
     {
         perror("socket");
@@ -75,22 +96,18 @@ int main()
     local.sin_port = htons(PORT);
     local.sin_addr.s_addr = INADDR_ANY;
 
-    if (bind(sock, (struct sockaddr*)&local, sizeof(local)) < 0)
+    if (bind(sock, (struct sockaddr *)&local, sizeof(local)) < 0)
     {
         perror("bind");
         return -1;
     }
 
-    printf("IPC running...\n");
+    printf("IPC UDP Server Running...\n");
 
     while (1)
     {
-        int n = recvfrom(sock,
-                         buf,
-                         sizeof(buf) - 1,
-                         0,
-                         (struct sockaddr*)&client,
-                         &client_len);
+        int n = recvfrom(sock, buf, sizeof(buf) - 1, 0,
+                         (struct sockaddr *)&client, &client_len);
 
         if (n <= 0)
             continue;
@@ -98,100 +115,124 @@ int main()
         buf[n] = 0;
 
         /* =========================
-           DISCOVER
-           ========================= */
+         * DISCOVER
+         * ========================= */
         if (buf[0] == CMD_DISCOVER)
         {
             if (get_first_ipv4(ifname, ip, mask) < 0)
             {
-                printf("no network interface\n");
+                printf("No Network Interface\n");
                 continue;
             }
 
             char reply[256];
             reply[0] = CMD_INFO;
 
-            snprintf(reply + 1,
-                     sizeof(reply) - 1,
-                     "{\"type\":\"ipc\",\"ip\":\"%s\"}",
-                     ip);
+            snprintf(reply + 1, sizeof(reply) - 1,
+                     "{\"type\":\"ipc\",\"ip\":\"%s\"}", ip);
 
-            sendto(sock,
-                   reply,
-                   strlen(reply + 1) + 1,
-                   0,
-                   (struct sockaddr*)&client,
-                   client_len);
+            sendto(sock, reply, strlen(reply + 1) + 1, 0,
+                   (struct sockaddr *)&client, client_len);
 
-            printf("[IPC] DISCOVER -> INFO (%s)\n", ip);
+            printf("[IPC] DISCOVER -> %s\n", ip);
         }
 
         /* =========================
-           GET CONFIG
-           ========================= */
+         * SINGLE CONFIG
+         * ========================= */
         else if (buf[0] == CMD_GETCFG)
         {
-            char key[256];
-            char value[256];
+            char key[128] = {0};
+            char value[128] = {0};
 
-            memset(key, 0, sizeof(key));
-            memset(value, 0, sizeof(value));
-
-            strcpy(key, buf + 1);
-
-            printf("[IPC] GETCFG: %s\n", key);
+            strncpy(key, buf + 1, sizeof(key) - 1);
 
             nbus_initial();
 
-            if (nbus_get(key,
-                         value,
-                         sizeof(value)) == NBUS_RESULT_OK)
+            if (nbus_get(key, value, sizeof(value)) == NBUS_RESULT_OK)
             {
                 char reply[512];
 
                 reply[0] = CMD_CFGDATA;
 
-                snprintf(reply + 1,
-                         sizeof(reply) - 1,
+                snprintf(reply + 1, sizeof(reply) - 1,
                          "{\"key\":\"%s\",\"value\":\"%s\"}",
-                         key,
-                         value);
+                         key, value);
 
-                sendto(sock,
-                       reply,
-                       strlen(reply + 1) + 1,
-                       0,
-                       (struct sockaddr*)&client,
-                       client_len);
-
-                printf("[IPC] SEND CFG OK\n");
+                sendto(sock, reply, strlen(reply + 1) + 1, 0,
+                       (struct sockaddr *)&client, client_len);
             }
             else
             {
                 char reply[128];
-
                 reply[0] = CMD_ERROR;
 
-                snprintf(reply + 1,
-                         sizeof(reply) - 1,
+                snprintf(reply + 1, sizeof(reply) - 1,
                          "{\"error\":\"nbus_get failed\"}");
 
-                sendto(sock,
-                       reply,
-                       strlen(reply + 1) + 1,
-                       0,
-                       (struct sockaddr*)&client,
-                       client_len);
-
-                printf("[IPC] GETCFG FAIL\n");
+                sendto(sock, reply, strlen(reply + 1) + 1, 0,
+                       (struct sockaddr *)&client, client_len);
             }
 
             nbus_release();
         }
 
         /* =========================
-           UNKNOWN
-           ========================= */
+         * STREAM1 BUNDLE (BEST)
+         * ========================= */
+        else if (buf[0] == CMD_BUNDLE || buf[0] == CMD_GETSTREAM1)
+        {
+            char codec[64];
+            char resolution[64];
+            char bitrate[64];
+            char framerate[64];
+            char gop[64];
+            char rate_control[64];
+            char profile[64];
+            char quality[64];
+            char snapshot[64];
+
+            nbus_initial();
+
+            get_cfg("encode.stream1.codec", "h265", codec, sizeof(codec));
+            get_cfg("encode.stream1.resolution", "1920x1080", resolution, sizeof(resolution));
+            get_cfg("encode.stream1.bit_rate", "2048", bitrate, sizeof(bitrate));
+            get_cfg("encode.stream1.frame_rate", "30", framerate, sizeof(framerate));
+            get_cfg("encode.stream1.gop", "100", gop, sizeof(gop));
+            get_cfg("encode.stream1.rate_control", "vbr", rate_control, sizeof(rate_control));
+            get_cfg("encode.stream1.profile", "main", profile, sizeof(profile));
+            get_cfg("encode.stream1.quality", "50", quality, sizeof(quality));
+            get_cfg("encode.stream1.jpeg_snapshot", "", snapshot, sizeof(snapshot));
+
+            char reply[1024];
+            reply[0] = CMD_CFGDATA;
+
+            snprintf(reply + 1, sizeof(reply) - 1,
+                     "{"
+                     "\"codec\":\"%s\","
+                     "\"resolution\":\"%s\","
+                     "\"bit_rate\":\"%s\","
+                     "\"frame_rate\":\"%s\","
+                     "\"gop\":\"%s\","
+                     "\"rate_control\":\"%s\","
+                     "\"profile\":\"%s\","
+                     "\"quality\":\"%s\","
+                     "\"jpeg_snapshot\":\"%s\""
+                     "}",
+                     codec, resolution, bitrate, framerate,
+                     gop, rate_control, profile, quality, snapshot);
+
+            sendto(sock, reply, strlen(reply + 1) + 1, 0,
+                   (struct sockaddr *)&client, client_len);
+
+            printf("[IPC] STREAM1 BUNDLE SENT\n");
+
+            nbus_release();
+        }
+
+        /* =========================
+         * UNKNOWN
+         * ========================= */
         else
         {
             printf("[IPC] UNKNOWN CMD: %c\n", buf[0]);
