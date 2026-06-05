@@ -1,3 +1,10 @@
+###############################################################################
+# IPC / XVR Private UDP Protocol (port 37000)
+#
+# IPC : ipc_udp_server.c -> ipc  (links NBUS)
+# XVR : xvr_discover.c   -> xvr  (no NBUS)
+###############################################################################
+
 CC = arm-ca9-linux-uclibcgnueabihf-gcc
 
 NBUS_PATH = /home/rd7/Project/NT9856x/code/hdal/nbus
@@ -5,9 +12,12 @@ NBUS_PATH = /home/rd7/Project/NT9856x/code/hdal/nbus
 ###############################################################################
 # FLAGS
 ###############################################################################
-CFLAGS = -Wall -O2 -fPIC \
-         -I$(NBUS_PATH)/inc \
-         -I.
+CFLAGS_COMMON = -Wall -O2 -fPIC -I.
+
+CFLAGS_IPC = $(CFLAGS_COMMON) \
+             -I$(NBUS_PATH)/inc
+
+CFLAGS_XVR = $(CFLAGS_COMMON)
 
 LDFLAGS_IPC = -L$(NBUS_PATH) -lnbus \
               -Wl,-rpath-link=$(NBUS_PATH)
@@ -18,6 +28,9 @@ LDFLAGS_IPC = -L$(NBUS_PATH) -lnbus \
 MODULE_IPC = ipc
 MODULE_XVR = xvr
 
+SRC_IPC = ipc_udp_server.c
+SRC_XVR = xvr_discover.c
+
 ###############################################################################
 # TARGETS
 ###############################################################################
@@ -26,18 +39,18 @@ MODULE_XVR = xvr
 all: ipc xvr
 
 ###############################################################################
-# IPC (SERVER)
+# IPC (SERVER) - requires NBUS
 ###############################################################################
-ipc: ipc_udp_server.c
+ipc: $(SRC_IPC)
 	@echo "Building IPC..."
-	$(CC) $(CFLAGS) $< -o $(MODULE_IPC) $(LDFLAGS_IPC)
+	$(CC) $(CFLAGS_IPC) $< -o $(MODULE_IPC) $(LDFLAGS_IPC)
 
 ###############################################################################
-# XVR (CLIENT)
+# XVR (CLIENT) - no NBUS
 ###############################################################################
-xvr: xvr_discover.c
+xvr: $(SRC_XVR)
 	@echo "Building XVR..."
-	$(CC) $(CFLAGS) $< -o $(MODULE_XVR)
+	$(CC) $(CFLAGS_XVR) $< -o $(MODULE_XVR)
 
 ###############################################################################
 # CLEAN
